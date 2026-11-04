@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morse</title>
+<style>
+:root{--bg:#e8ebee;--panel:#f6f7f8;--ink:#17202b;--mute:#5d6875;--line:#c5ccd3;--key:#1f4e79;--key-ink:#fff;--sig:#c4570c;--ok:#1d7a46}
+@media (prefers-color-scheme:dark){:root{--bg:#10151b;--panel:#18202a;--ink:#e6ebf0;--mute:#8e9aa8;--line:#2c3744;--key:#5aa0dc;--key-ink:#0b1117;--sig:#ff9a4d;--ok:#4cc585}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px;min-height:100vh}
+main{max-width:640px;margin:0 auto;display:grid;gap:14px}
+header{display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:4px 0 0;font-weight:650}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:15px;margin:0 0 10px;font-weight:650}
+.row{display:flex;gap:8px}
+input[type=text]{flex:1;min-width:0;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:10px 14px}
+button.go{background:var(--key);color:var(--key-ink);border-color:var(--key);font-size:20px;line-height:1;padding:0 18px;font-weight:700}
+button.on{background:var(--ok);border-color:var(--ok);color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--key);outline-offset:2px}
+.code{font:18px/1.6 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;word-break:break-all;color:var(--sig);min-height:1.6em;margin-top:10px}
+.set{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;margin-top:10px;font-size:14px;color:var(--mute)}
+.set output{min-width:72px;text-align:right;color:var(--ink)}
+input[type=range]{width:100%;accent-color:var(--key)}
+select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+label.chk{display:flex;gap:6px;align-items:center;font-size:14px}
+.meter{height:10px;border-radius:5px;background:var(--bg);border:1px solid var(--line);overflow:hidden;margin:12px 0 4px}
+.meter i{display:block;height:100%;width:0;background:var(--mute);transition:width .05s}
+.meter.hit i{background:var(--sig)}
+.out{min-height:96px;font-size:26px;line-height:1.35;word-break:break-word;white-space:pre-wrap;padding:10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;margin-top:10px}
+.out:empty::before{content:attr(data-ph);font-size:15px;color:var(--mute)}
+.live{font:18px ui-monospace,Menlo,Consolas,monospace;color:var(--sig);min-height:1.5em;letter-spacing:.15em}
+.msg{font-size:13px;color:var(--mute);min-height:1.3em;margin-top:6px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 data-i="title"></h1>
+    <button id="lang" aria-label="Language">EN</button>
+  </header>
+
+  <section>
+    <h2 data-i="h_send"></h2>
+    <div class="row">
+      <input type="text" id="text" autocomplete="off" autofocus>
+      <button class="go" id="send">&rarr;</button>
+    </div>
+    <div class="code" id="sentCode" aria-live="polite"></div>
+    <div class="set">
+      <label for="wpm" data-i="speed"></label><input type="range" id="wpm" min="6" max="25" value="12"><output id="wpmV"></output>
+      <label for="freq" data-i="tone"></label><input type="range" id="freq" min="300" max="1500" step="10" value="700"><output id="freqV"></output>
+    </div>
+  </section>
+
+  <section>
+    <h2 data-i="h_recv"></h2>
+    <div class="bar">
+      <button id="mic"></button>
+      <select id="alpha"><option value="cyr" data-i="cyr"></option><option value="lat" data-i="lat"></option></select>
+      <label class="chk"><input type="checkbox" id="auto" checked><span data-i="auto"></span></label>
+      <button id="clear" data-i="clear"></button>
+    </div>
+    <div class="meter" id="meter"><i id="lvl"></i></div>
+    <div class="live" id="live"></div>
+    <div class="out" id="out" aria-live="polite"></div>
+    <div class="msg" id="msg"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+/* ---------- ЯЗЫК / LANGUAGE ---------- */
+const I18N = {
+  ru: { title:"Азбука Морзе", h_send:"Передача", h_recv:"Приём с микрофона", speed:"Скорость", tone:"Тон", wpm:"зн/мин", hz:"Гц",
+        cyr:"Кириллица", lat:"Латиница", auto:"Авто-тон", clear:"Очистить", ph:"Введите текст", ph_out:"Здесь появится принятый текст",
+        mic_off:"Включить микрофон", mic_on:"Микрофон включён", send:"Отправить", stop:"Остановить",
+        l_auto:"Слушаю любой чистый тон. Голос и шум игнорируются.", l_fixed:"Слушаю тон {f} Гц. Голос и шум игнорируются.", det:"Принят тон: {f} Гц",
+        err:"Нет доступа к микрофону. Разрешите его в настройках браузера и откройте файл в Chrome, Edge или Safari.", other:"EN" },
+  en: { title:"Morse Code", h_send:"Send", h_recv:"Receive from microphone", speed:"Speed", tone:"Tone", wpm:"WPM", hz:"Hz",
+        cyr:"Cyrillic", lat:"Latin", auto:"Auto tone", clear:"Clear", ph:"Type a message", ph_out:"Received text will appear here",
+        mic_off:"Turn on microphone", mic_on:"Microphone on", send:"Send", stop:"Stop",
+        l_auto:"Listening for any clean tone. Voice and noise are ignored.", l_fixed:"Listening for a {f} Hz tone. Voice and noise are ignored.", det:"Tone detected: {f} Hz",
+        err:"Microphone access denied. Allow it in your browser settings and open this file in Chrome, Edge or Safari.", other:"RU" }
+};
+let lang = "ru";
+const t = (k, f) => I18N[lang][k].replace("{f}", f);
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.title = t("title");
+  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i));
+  $("text").placeholder = t("ph");
+  $("out").dataset.ph = t("ph_out");
+  $("lang").textContent = I18N[lang].other;
+  $("wpmV").textContent = $("wpm").value + " " + t("wpm");
+  $("freqV").textContent = $("freq").value + " " + t("hz");
+  $("send").setAttribute("aria-label", t(playing ? "stop" : "send"));
+  setMicUI();
+  setMsg();
+}
+$("lang").onclick = () => { lang = lang === "ru" ? "en" : "ru"; $("alpha").value = lang === "ru" ? "cyr" : "lat"; applyLang(); };
+
+/* ---------- ТАБЛИЦЫ ---------- */
+const parse = s => Object.fromEntries(s.split(",").map(p => { const [c, m] = p.trim().split(" "); return [c, m]; }));
+const LAT = parse("A .-,B -...,C -.-.,D -..,E .,F ..-.,G --.,H ....,I ..,J .---,K -.-,L .-..,M --,N -.,O ---,P .--.,Q --.-,R .-.,S ...,T -,U ..-,V ...-,W .--,X -..-,Y -.--,Z --..");
+const CYR = parse("А .-,Б -...,В .--,Г --.,Д -..,Е .,Ж ...-,З --..,И ..,Й .---,К -.-,Л .-..,М --,Н -.,О ---,П .--.,Р .-.,С ...,Т -,У ..-,Ф ..-.,Х ....,Ц -.-.,Ч ---.,Ш ----,Щ --.-,Ъ --.--,Ы -.--,Ь -..-,Э ..-..,Ю ..--,Я .-.-");
+const COM = parse("0 -----,1 .----,2 ..---,3 ...--,4 ....-,5 .....,6 -....,7 --...,8 ---..,9 ----.,. .-.-.-,, --..--,? ..--..,! -.-.--,- -....-,/ -..-.,: ---...,@ .--.-.,= -...-");
+const ENC = { ...LAT, ...CYR, ...COM };
+const inv = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [v, k]));
+const DEC = { lat: inv({ ...LAT, ...COM }), cyr: inv({ ...CYR, ...COM }) };
+
+let ctx = null, osc = null, playing = false;
+let stream = null, analyser = null, buf = null, timer = null;
+let detHz = 0;
+
+function ensureCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  return ctx.state === "suspended" ? ctx.resume() : Promise.resolve();
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const unit = () => 1200 / $("wpm").value; // мс
+
+/* ---------- ПЕРЕДАЧА ---------- */
+function toMorse(text) {
+  return text.toUpperCase().replace(/Ё/g, "Е").split(/\s+/).filter(Boolean)
+    .map(w => [...w].map(c => ENC[c]).filter(Boolean).join(" ")).filter(Boolean).join(" / ");
+}
+
+function play(text) {
+  const u = unit() / 1000, f = +$("freq").value;
+  const words = toMorse(text).split(" / ");
+  $("sentCode").textContent = words.join("  /  ");
+  osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.frequency.value = f;
+  g.gain.value = 0;
+  osc.connect(g).connect(ctx.destination);
+  let tt = ctx.currentTime + 0.2;
+  const r = 0.005;
+  words.forEach((w, wi) => {
+    w.split(" ").forEach(letter => {
+      [...letter].forEach(s => {
+        const d = s === "." ? u : 3 * u;
+        g.gain.setValueAtTime(0, tt);
+        g.gain.linearRampToValueAtTime(0.6, tt + r);
+        g.gain.setValueAtTime(0.6, tt + d - r);
+        g.gain.linearRampToValueAtTime(0, tt + d);
+        tt += d + u;
+      });
+      tt += 2 * u;
+    });
+    if (wi < words.length - 1) tt += 4 * u;
+  });
+  osc.start();
+  osc.stop(tt + 0.1);
+  playing = true;
+  $("send").innerHTML = "&#9632;"; $("send").setAttribute("aria-label", t("stop"));
+  osc.onended = () => { playing = false; $("send").innerHTML = "&rarr;"; $("send").setAttribute("aria-label", t("send")); };
+}
+
+async function send() {
+  if (playing) { try { osc.stop(); } catch (e) {} return; }
+  const text = $("text").value.trim();
+  if (!text) { $("text").focus(); return; }
+  await ensureCtx();
+  if (!stream) await startMic();
+  play(text);
+}
+$("send").onclick = send;
+$("text").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+/* ---------- ПРИЁМ ---------- */
+let on = false, cand = null, candAt = 0, tOn = 0, tOff = 0, sym = "", ru = 100, spaced = true, out = "";
+let ref = 0, fmin = 0, fmax = 0;
+
+function render() { $("out").textContent = out; $("live").textContent = sym.split("").join(" "); }
+function flush() {
+  if (!sym) return;
+  const ch = DEC[$("alpha").value][sym];
+  sym = "";
+  if (ch) { out += ch; spaced = false; }   // мусорные комбинации не выводим
+  render();
+}
+function addSpace() { if (!spaced && out) { out += " "; spaced = true; render(); } }
+
+function edge(raw, tm, f) {
+  if (raw) {                                  // начался тон
+    const gap = tm - tOff;
+    if (sym) { if (gap > 5 * ru) { flush(); addSpace(); } else if (gap > 2 * ru) flush(); }
+    else if (gap > 5 * ru) addSpace();
+    tOn = tm; on = true; ref = fmin = fmax = f;
+  } else {                                    // тон закончился
+    const dur = tm - tOn;
+    on = false; tOff = tm;
+    if (dur < ru * 0.35) return;              // слишком короткий щелчок
+    if (fmax - fmin > 40) return;             // тон «плавал»: это не морзянка (голос)
+    const base = unit();
+    if (dur < 2 * ru) { sym += "."; ru = clamp(0.7 * ru + 0.3 * dur, base * 0.5, base * 2); }
+    else { sym += "-"; ru = clamp(0.7 * ru + 0.3 * dur / 3, base * 0.5, base * 2); }
+    if (sym.length > 7) sym = "";
+    render();
+  }
+}
+
+function tick() {
+  analyser.getFloatFrequencyData(buf);
+  const now = performance.now();
+  const bh = ctx.sampleRate / analyser.fftSize, N = buf.length;
+  const auto = $("auto").checked, tf = +$("freq").value;
+  const lo = Math.max(16, Math.round((auto ? 300 : tf - 80) / bh));
+  const hi = Math.min(N - 16, Math.round((auto ? 2000 : tf + 80) / bh));
+  if (hi <= lo) return;
+
+  // 1. самый сильный пик в диапазоне
+  let pb = lo, pk = -200;
+  for (let i = lo; i <= hi; i++) if (buf[i] > pk) { pk = buf[i]; pb = i; }
+  // 2. насколько он выше локального шума
+  let s = 0, n = 0;
+  for (let k = 5; k <= 14; k++) { s += buf[pb - k] + buf[pb + k]; n += 2; }
+  const snr = pk - s / n;
+  // 3. насколько он выше ВСЕГО остального спектра (у голоса много гармоник, у чистого тона — одна линия)
+  const a = Math.max(1, Math.round(250 / bh)), z = Math.min(N - 1, Math.round(4000 / bh));
+  let other = -200;
+  for (let i = a; i <= z; i++) if (Math.abs(i - pb) > 4 && buf[i] > other) other = buf[i];
+  const dom = pk - other;
+  // 4. точная частота (параболическая интерполяция)
+  const A = buf[pb - 1], B = buf[pb], C = buf[pb + 1], den = A - 2 * B + C;
+  const f = (pb + (den < 0 ? clamp(0.5 * (A - C) / den, -0.5, 0.5) : 0)) * bh;
+
+  const stable = !on || Math.abs(f - ref) < 35;
+  const strong = on ? (snr > 8 && dom > 14 && pk > -85) : (snr > 14 && dom > 22 && pk > -80);
+  const raw = strong && stable;
+
+  if (raw && on) { ref = 0.85 * ref + 0.15 * f; fmin = Math.min(fmin, f); fmax = Math.max(fmax, f); }
+
+  if (raw !== on) {
+    if (cand !== raw) { cand = raw; candAt = now; }
+    else if (now - candAt >= 20) { edge(raw, candAt, f); cand = null; }
+  } else cand = null;
+
+  if (on && auto && Math.abs(detHz - ref) > 8) { detHz = ref; $("msg").textContent = t("det", Math.round(ref)); }
+
+  if (!on) {
+    const gap = now - tOff;
+    if (sym && gap > 2 * ru) flush();
+    if (!sym && !spaced && gap > 5 * ru) addSpace();
+  }
+  $("lvl").style.width = clamp(snr * 3, 0, 100) + "%";
+  $("meter").classList.toggle("hit", on);
+}
+
+function setMicUI() {
+  $("mic").textContent = t(stream ? "mic_on" : "mic_off");
+  $("mic").classList.toggle("on", !!stream);
+}
+function setMsg(errText) {
+  if (errText) { $("msg").textContent = errText; return; }
+  if (!stream) { $("msg").textContent = ""; return; }
+  $("msg").textContent = $("auto").checked ? t("l_auto") : t("l_fixed", $("freq").value);
+}
+
+async function startMic() {
+  try {
+    await ensureCtx();
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0;
+    buf = new Float32Array(analyser.frequencyBinCount);
+    src.connect(analyser);
+    on = false; cand = null; tOff = performance.now(); ru = unit(); detHz = 0;
+    timer = setInterval(tick, 10);
+    setMicUI(); setMsg();
+  } catch (e) {
+    stream = null; setMicUI(); setMsg(t("err"));
+  }
+}
+function stopMic() {
+  clearInterval(timer);
+  if (stream) stream.getTracks().forEach(tr => tr.stop());
+  stream = null; analyser = null;
+  $("lvl").style.width = "0"; $("meter").classList.remove("hit");
+  flush(); setMicUI(); setMsg();
+}
+$("mic").onclick = () => stream ? stopMic() : startMic();
+$("clear").onclick = () => { out = ""; sym = ""; spaced = true; ru = unit(); render(); };
+$("auto").onchange = () => setMsg();
+$("wpm").oninput = () => { $("wpmV").textContent = $("wpm").value + " " + t("wpm"); ru = unit(); };
+$("freq").oninput = () => { $("freqV").textContent = $("freq").value + " " + t("hz"); setMsg(); };
+
+applyLang();
+</script>
+</body>
+</html>
