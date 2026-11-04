@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Морзе: звук и приём с микрофона</title>
+<style>
+:root{--bg:#e8ebee;--panel:#f6f7f8;--ink:#17202b;--mute:#5d6875;--line:#c5ccd3;--key:#1f4e79;--key-ink:#fff;--sig:#c4570c;--ok:#1d7a46}
+@media (prefers-color-scheme:dark){:root{--bg:#10151b;--panel:#18202a;--ink:#e6ebf0;--mute:#8e9aa8;--line:#2c3744;--key:#5aa0dc;--key-ink:#0b1117;--sig:#ff9a4d;--ok:#4cc585}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px;min-height:100vh}
+main{max-width:640px;margin:0 auto;display:grid;gap:14px}
+h1{font-size:22px;margin:4px 0 0;font-weight:650}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:15px;margin:0 0 10px;font-weight:650}
+.row{display:flex;gap:8px}
+input[type=text]{flex:1;min-width:0;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:10px 14px}
+button.go{background:var(--key);color:var(--key-ink);border-color:var(--key);font-size:20px;line-height:1;padding:0 18px;font-weight:700}
+button.on{background:var(--ok);border-color:var(--ok);color:#fff}
+button:focus-visible,input:focus-visible{outline:2px solid var(--key);outline-offset:2px}
+.code{font:18px/1.6 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;word-break:break-all;color:var(--sig);min-height:1.6em;margin-top:10px}
+.set{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;margin-top:10px;font-size:14px;color:var(--mute)}
+.set output{min-width:64px;text-align:right;color:var(--ink)}
+input[type=range]{width:100%;accent-color:var(--key)}
+select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.meter{height:10px;border-radius:5px;background:var(--bg);border:1px solid var(--line);overflow:hidden;margin:12px 0 4px}
+.meter i{display:block;height:100%;width:0;background:var(--mute);transition:width .05s}
+.meter.hit i{background:var(--sig)}
+.out{min-height:96px;font-size:26px;line-height:1.35;word-break:break-word;white-space:pre-wrap;padding:10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;margin-top:10px}
+.out:empty::before{content:"Здесь появится принятый текст";font-size:15px;color:var(--mute)}
+.live{font:18px ui-monospace,Menlo,Consolas,monospace;color:var(--sig);min-height:1.5em;letter-spacing:.15em}
+.msg{font-size:13px;color:var(--mute);min-height:1.3em;margin-top:6px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style>
+</head>
+<body>
+<main>
+  <h1>Азбука Морзе</h1>
+
+  <section>
+    <h2>Передача</h2>
+    <div class="row">
+      <input type="text" id="text" placeholder="Введите текст" autocomplete="off" autofocus>
+      <button class="go" id="send" aria-label="Отправить">&rarr;</button>
+    </div>
+    <div class="code" id="sentCode" aria-live="polite"></div>
+    <div class="set">
+      <label for="wpm">Скорость</label><input type="range" id="wpm" min="6" max="25" value="12"><output id="wpmV">12 зн/мин</output>
+      <label for="freq">Тон</label><input type="range" id="freq" min="400" max="1200" step="10" value="700"><output id="freqV">700 Гц</output>
+    </div>
+  </section>
+
+  <section>
+    <h2>Приём с микрофона</h2>
+    <div class="bar">
+      <button id="mic">Включить микрофон</button>
+      <select id="alpha" aria-label="Алфавит приёма">
+        <option value="cyr">Кириллица</option>
+        <option value="lat">Латиница</option>
+      </select>
+      <button id="clear">Очистить</button>
+    </div>
+    <div class="meter" id="meter"><i id="lvl"></i></div>
+    <div class="live" id="live"></div>
+    <div class="out" id="out" aria-live="polite"></div>
+    <div class="msg" id="msg"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const parse = s => Object.fromEntries(s.split(",").map(p => { const [c, m] = p.trim().split(" "); return [c, m]; }));
+
+const LAT = parse("A .-,B -...,C -.-.,D -..,E .,F ..-.,G --.,H ....,I ..,J .---,K -.-,L .-..,M --,N -.,O ---,P .--.,Q --.-,R .-.,S ...,T -,U ..-,V ...-,W .--,X -..-,Y -.--,Z --..");
+const CYR = parse("А .-,Б -...,В .--,Г --.,Д -..,Е .,Ж ...-,З --..,И ..,Й .---,К -.-,Л .-..,М --,Н -.,О ---,П .--.,Р .-.,С ...,Т -,У ..-,Ф ..-.,Х ....,Ц -.-.,Ч ---.,Ш ----,Щ --.-,Ъ --.--,Ы -.--,Ь -..-,Э ..-..,Ю ..--,Я .-.-");
+const COM = parse("0 -----,1 .----,2 ..---,3 ...--,4 ....-,5 .....,6 -....,7 --...,8 ---..,9 ----.,. .-.-.-,, --..--,? ..--..,! -.-.--,- -....-,/ -..-.,: ---...,@ .--.-.,= -...-");
+
+const ENC = { ...LAT, ...CYR, ...COM };
+const inv = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [v, k]));
+const DEC = { lat: inv({ ...LAT, ...COM }), cyr: inv({ ...CYR, ...COM }) };
+
+let ctx = null, osc = null, playing = false;
+let stream = null, analyser = null, buf = null, timer = null;
+
+function ensureCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === "suspended") return ctx.resume();
+  return Promise.resolve();
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const unit = () => 1200 / $("wpm").value; // мс
+
+/* ---------- ПЕРЕДАЧА ---------- */
+function toMorse(text) {
+  return text.toUpperCase().replace(/Ё/g, "Е").split(/\s+/).filter(Boolean)
+    .map(w => [...w].map(c => ENC[c]).filter(Boolean).join(" ")).filter(Boolean).join(" / ");
+}
+
+function play(text) {
+  const u = unit() / 1000, f = +$("freq").value;
+  const words = toMorse(text).split(" / ");
+  $("sentCode").textContent = words.join("  /  ");
+  osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.frequency.value = f;
+  g.gain.value = 0;
+  osc.connect(g).connect(ctx.destination);
+  let t = ctx.currentTime + 0.2;
+  const ramp = 0.005;
+  words.forEach((w, wi) => {
+    w.split(" ").forEach(letter => {
+      [...letter].forEach(s => {
+        const d = s === "." ? u : 3 * u;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.6, t + ramp);
+        g.gain.setValueAtTime(0.6, t + d - ramp);
+        g.gain.linearRampToValueAtTime(0, t + d);
+        t += d + u;
+      });
+      t += 2 * u;           // пауза между буквами = 3 единицы
+    });
+    if (wi < words.length - 1) t += 4 * u; // пауза между словами = 7 единиц
+  });
+  osc.start();
+  osc.stop(t + 0.1);
+  playing = true;
+  $("send").innerHTML = "&#9632;";
+  $("send").setAttribute("aria-label", "Остановить");
+  osc.onended = () => { playing = false; $("send").innerHTML = "&rarr;"; $("send").setAttribute("aria-label", "Отправить"); };
+}
+
+async function send() {
+  if (playing) { try { osc.stop(); } catch (e) {} return; }
+  const text = $("text").value.trim();
+  if (!text) { $("text").focus(); return; }
+  await ensureCtx();
+  if (!stream) await startMic();
+  play(text);
+}
+$("send").onclick = send;
+$("text").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+/* ---------- ПРИЁМ ---------- */
+let on = false, cand = null, candAt = 0, tOn = 0, tOff = 0, sym = "", ru = 100, spaced = true, out = "";
+
+function render() {
+  $("out").textContent = out;
+  $("live").textContent = sym.split("").join(" ");
+}
+function flush() {
+  if (!sym) return;
+  out += DEC[$("alpha").value][sym] || "?";
+  sym = ""; spaced = false; render();
+}
+function addSpace() {
+  if (!spaced && out) { out += " "; spaced = true; render(); }
+}
+function edge(raw, t) {
+  if (raw) {                                  // начался тон
+    const gap = t - tOff;
+    if (sym) { if (gap > 5 * ru) { flush(); addSpace(); } else if (gap > 2 * ru) flush(); }
+    else if (gap > 5 * ru) addSpace();
+    tOn = t; on = true;
+  } else {                                    // тон закончился
+    const dur = t - tOn;
+    on = false; tOff = t;
+    if (dur < ru * 0.35) return;              // слишком короткий щелчок: шум
+    if (dur < 2 * ru) { sym += "."; ru = clamp(0.7 * ru + 0.3 * dur, 40, 400); }
+    else { sym += "-"; ru = clamp(0.7 * ru + 0.3 * dur / 3, 40, 400); }
+    render();
+  }
+}
+
+function tick() {
+  analyser.getFloatFrequencyData(buf);
+  const now = performance.now();
+  const binHz = ctx.sampleRate / analyser.fftSize;
+  const b = Math.round($("freq").value / binHz);
+  let pk = -200;
+  for (let i = b - 1; i <= b + 1; i++) if (buf[i] > pk) pk = buf[i];
+  let s = 0, n = 0;
+  for (let k = 5; k <= 14; k++) {
+    if (b - k >= 0) { s += buf[b - k]; n++; }
+    if (b + k < buf.length) { s += buf[b + k]; n++; }
+  }
+  const snr = pk - (n ? s / n : -120);
+  const raw = on ? (snr > 8 && pk > -85) : (snr > 14 && pk > -80);
+
+  if (raw !== on) {
+    if (cand !== raw) { cand = raw; candAt = now; }
+    else if (now - candAt >= 20) { edge(raw, candAt); cand = null; }
+  } else cand = null;
+
+  if (!on) {
+    const gap = now - tOff;
+    if (sym && gap > 2 * ru) flush();
+    if (!sym && !spaced && gap > 5 * ru) addSpace();
+  }
+  $("lvl").style.width = clamp(snr * 3, 0, 100) + "%";
+  $("meter").classList.toggle("hit", on);
+}
+
+async function startMic() {
+  try {
+    await ensureCtx();
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0;
+    buf = new Float32Array(analyser.frequencyBinCount);
+    src.connect(analyser);
+    on = false; cand = null; tOff = performance.now(); ru = unit();
+    timer = setInterval(tick, 10);
+    $("mic").textContent = "Микрофон включён";
+    $("mic").classList.add("on");
+    $("msg").textContent = "Слушаю тон " + $("freq").value + " Гц.";
+  } catch (e) {
+    stream = null;
+    $("msg").textContent = "Нет доступа к микрофону. Разрешите его в настройках браузера и откройте файл в Chrome, Edge или Safari.";
+  }
+}
+function stopMic() {
+  clearInterval(timer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; analyser = null;
+  $("mic").textContent = "Включить микрофон";
+  $("mic").classList.remove("on");
+  $("lvl").style.width = "0"; $("meter").classList.remove("hit");
+  flush(); $("msg").textContent = "";
+}
+$("mic").onclick = () => stream ? stopMic() : startMic();
+$("clear").onclick = () => { out = ""; sym = ""; spaced = true; ru = unit(); render(); };
+
+$("wpm").oninput = e => { $("wpmV").textContent = e.target.value + " зн/мин"; ru = unit(); };
+$("freq").oninput = e => { $("freqV").textContent = e.target.value + " Гц"; if (stream) $("msg").textContent = "Слушаю тон " + e.target.value + " Гц."; };
+</script>
+</body>
+</html>
